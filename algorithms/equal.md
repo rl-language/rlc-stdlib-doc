@@ -12,3 +12,6 @@
 ```
  Nof fully impelemted, do not use
 ```
+## trait Comparable
+* fun `custom_equal(T lhs, T rhs)  -> Bool`
+
