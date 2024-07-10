@@ -248,7 +248,302 @@ All arguments of functions are passed by reference. Function return types may be
 Function which have a name that start with `_`, such as `_add` are not visible from outside the file in which have been declared.
 
 #### Template functions
-# ToDo
+ ToDo
+
+### Action Function
+Action functions are the most important language feature of the `rulebook` language.
+Action functions are looks like regular functions, except that
+* they are prefixed with act, instead of fun
+* the return type is not a return type, but it is instead the `action function type`, a new type declared by the action function itself.
+* `action statements` must appear in the body of the action function.
+
+
+For example, a simple action function you can write is
+```
+act play() -> Game:
+    act set_x(Int value)
+    frm x = value
+    act print_x()
+    print(x)
+```
+
+When the compiler encounters this action declaration, it rewrites it as a class that looks like
+
+```
+cls Game:
+    Int x
+    Int resume_index
+
+    fun init():
+        self.resume_index = 0
+        self.x = 0
+
+    fun set_x(Int value) {resume_index == 0}
+        self.x = value
+        self.resume_index = 1
+
+    fun print_x() {resume_index == 1}
+        pritn(self.index)
+        resume_index = -1
+
+    fun is_done() -> Bool:
+        return self.resume_index == -1
+
+fun play() -> Game:
+    let game : Game
+    return game
+```
+
+Why does it do that? Because then you can use the play function as follow
+```
+fun use_play():
+    let game = play()
+    game.set_x(4)
+    game.print_x()
+```
+That is, when you were writing play, you expressed points of the program in which the program was to be suspended waiting for input from the invoker of play. If our particular example it does make much sense to do so. Here is a more realistic one.
+
+```
+# implements a vending machine that expects
+# coints to be inserted the user
+act vending_machine(frm Int target_cost) -> VendingMachine:
+    while target_cost != 0:
+        act insert_coin(Int coin_value) {coin_value == 1 or coin_value == 5 or coin_value == 10}
+        target_cost = target_cost - coin_value
+
+fun main() -> Int:
+    let machine = vending_machine(16)
+    print(can machine.insert_coin(3)) # false
+    # machine.insert_coin(3) # would crash
+    print(can machine.insert_coin(1)) # true
+    machine.insert_coin(1)
+    machine.insert_coin(5)
+    machine.insert_coin(10)
+    print(machine.is_done()) # true
+    return 0
+```
+
+The purpose of action function is therefore to convert a imperative description of a procedure that requires inputs, into a class that can be stopped and resumed at will.
+
+Action functions cannot return objects, their return type is instead used to declare a new type.
+
+#### Frm and Ctx qualifiers
+
+Variable declarations, action statements arguments and action functions arguments can be optionally be marked with the kewword `frm`.
+
+For example
+```
+act vending_machine(frm Int target_cost) -> VendingMachine:
+    while target_cost != 0:
+        act insert_coin(Int coin_value) {coin_value == 1 or coin_value == 5 or coin_value == 10}
+        target_cost = target_cost - coin_value
+
+fun main() -> Int:
+    let machine = vending_machine(16)
+    print(machine.target_cost) # 16
+    # print(machine.coin_value) # does not compile
+```
+
+When a variable marked `frm` is promoted to be a local variable to be a member of the class declared by the action function, in this case the class VendingMachine. If a variable is used across actions it must be marked as `frm`. This is necessary because to be used across actions the variable must be saved somewhere between actions invocations from the users. If you forget to mark a variable as `frm` you will be prompted by the compiler to do so if you use it between actions.
+
+You can mark variable not used across action as well. This is usefull to expose data to the caller of the action function.
+
+
+`ctx` variables are different, they are used to specify that some state of the computation needed by the action function is stored outside of the action function itself. Ctx variables must be passed as argument of every function call to a object that has one.
+
+For example
+
+```
+act vending_machine(ctx Int target_cost, frm Int target_cost2) -> VendingMachine:
+    while target_cost != 0:
+        act insert_coin(Int coin_value) {coin_value == 1 or coin_value == 5 or coin_value == 10}
+        target_cost = target_cost - coin_value
+        target_cost2 = target_cost
+
+fun main() -> Int:
+    let x = 16
+    let y = 16
+    let machine = vending_machine(x, y)
+    machine.insert_coin(x, 1)
+    print(x) # 15
+    print(y) # 16
+```
+
+Since `target_cost2` is marked `frm`, it is copied within the variable `machine`, thus modifying  `target_cost2` does not change y. `target_cost`  is in marked as `ctx`, and is not saved within the class `VendingMachine`. It must be passed every time a member function of machine (except `is_done`) is invoked.
+
+Context variables are very usefull when combined with `subaction` statements.
+
+#### Action statements
+
+Action statements are used to specify the points where user information is required, the minimal syntax is as follow
+```
+act action_function() -> ActionFunctionType:
+    ...
+    act wait_to_be_called()
+```
+
+Optionally, action statements can have arguments
+```
+act action_function() -> ActionFunctionType:
+    act callme(Int x)
+
+fun f():
+    let state = action_function()
+    state.callme(1)
+```
+
+Similarly, they can have preconditions
+
+```
+act action_function() -> ActionFunctionType:
+    act callme(Int x) {x != 0}
+
+fun f():
+    let state = action_function()
+    print(can state.callme(0)) # false
+    print(can state.callme(1)) # true
+```
+
+#### Actions statements
+
+Actions statements are used to express alternative actions, that is, actions can be performed in any order. For example
+```
+act vending_machine(frm Int target_cost2) -> VendingMachine:
+    while target_cost != 0:
+        actions:
+            act insert_5_coin()
+                target_cost = target_cost - 5
+            act insert_1_coin()
+                target_cost = target_cost - 1
+            act insert_10_coin()
+                target_cost = target_cost - 10
+
+fun main() -> Int:
+    let machine = vending_machine(20)
+    machine.insert_10_coin()
+    machine.insert_10_coin()
+    return 0
+```
+
+#### Subaction statement
+Subaction statements allow for composition of actions. Just like regular functions can call other functions, subaction statements allow to specify that the computation of the current action function must be suspended until the user invokes a action of the specified subaction. For example.
+```
+act vending_machine(frm Int target_cost) -> VendingMachine:
+    while target_cost != 0:
+        actions:
+            act insert_5_coin()
+                target_cost = target_cost - 5
+            act insert_1_coin()
+                target_cost = target_cost - 1
+            act insert_10_coin()
+                target_cost = target_cost - 10
+
+act vending_machine_times_two(Int first, Int second) -> VendingMachinePair:
+    subaction* first_machine = vending_machine(first)
+    subaction* second_machine = vending_machine(second)
+
+fun main() -> Int:
+    let machine = vending_machine_times_two(20, 2)
+    machine.insert_10_coin()
+    machine.insert_10_coin()
+    machine.insert_1_coin()
+    machine.insert_1_coin()
+    return 0
+```
+
+The function `vending_machine_times_two` is lowered to the following piece of code
+```
+act vending_machine_times_two(Int first, Int second) -> VendingMachinePair:
+    frm first_machine = vending_machine(first)
+    while !first_machine.is_done():
+        act insert_5_coin() {can first_machine.insert_5_coin()}
+            first_machine.insert_5_coin()
+        act insert_1_coin() {can first_machine.insert_1_coin()}
+            first_machine.insert_1_coin()
+        act insert_10_coin() {can first_machine.insert_1_coin()}
+            first_machine.insert_10_coin()
+
+    frm second_machine = vending_machine(second)
+    while !second_machine.is_done():
+        act insert_5_coin() {can second_machine.insert_5_coin()}
+            second_machine.insert_5_coin()
+        act insert_1_coin() {can second_machine.insert_1_coin()}
+            second_machine.insert_1_coin()
+        act insert_10_coin() {can second_machine.insert_1_coin()}
+            second_machine.insert_10_coin()
+```
+
+That is: the computation of the outer action function will not resume until the inner action function named by the subaction statement is not terminated.
+
+If you instead with to execute a single action statement, instead of executing them all the way to the end, you can use the subaction syntax without `*`.
+For example:
+
+```
+act vending_machine(frm Int target_cost) -> VendingMachine:
+    while target_cost != 0:
+        actions:
+            act insert_5_coin()
+                target_cost = target_cost - 5
+            act insert_1_coin()
+                target_cost = target_cost - 1
+            act insert_10_coin()
+                target_cost = target_cost - 10
+
+act vending_machine_times_two(frm Int first) -> VendingMachinePair:
+    subaction*(first) first_machine = vending_machine(first)
+    subaction*(first) second_machine = vending_machine(second)
+
+
+fun main() -> Int:
+    let state = vending_machine_times_two(10)
+    state.insert_5_coin()
+    state.insert_5_coin()
+    if state.is_done():
+        return 0
+    return 1
+```
+
+This example shows how to share state between two subactions. The inner vending machines have their `target_cost` variable marked as `ctx`, and thus owned by the caller. The caller, `vending_achine_first_times_two` uses two `subaction*` to execute both actions until the `target_cost` reaches 0. Since `target_cost` is zero, they will reach zero at the same time, so when the `first_machine` terminates, so immediatelly does `second_machine`, and thus `vending_machine_times_two`. The significant improvement is that with the syntax `subaction*(first)` we are forwarding first to every invocation of methods of the subactions, remove the requirements for the function `main` to do so. `main` can simply invoke `state.insert_5_coin()`, unware of state is organized within veding machines.
+
+
+#### Context variables in subaction statements
+
+There is a important language feature built in subaction statements and context varibles, which enable to share data between distinct subactions.
+Let us look at a example first
+
+```
+act vending_machine(ctx Int target_cost) -> VendingMachine:
+    while target_cost != 0:
+        act insert_1_coin()
+        target_cost = target_cost - 1
+
+act vending_machine_times_two(Int first, Int second) -> VendingMachinePair:
+    let first_machine = vending_machine(first)
+    let second_machine = vending_machine(second)
+
+    while !first_machine.is_done() and !second_machine.is_done():
+        subaction
+
+act vending_machine_times_two(Int first, Int second) -> VendingMachinePair:
+    frm first_machine = vending_machine(first)
+    frm second_machine = vending_machine(second)
+
+    while !first_machine.is_done() and !second_machine.is_done():
+        subaction first_machine
+        subaction second_machine
+
+
+fun main() -> Int:
+    let state = vending_machine_times_two(10, 2)
+    state.insert_5_coin()
+    state.insert_1_coin()
+    state.insert_5_coin()
+    state.insert_1_coin()
+    if state.is_done():
+        return 0
+    return 1
+
+```
 
 
 ### Return statements
@@ -370,3 +665,6 @@ This special declaration statements are explained in the action function section
 
 ### declaration statements destruction
 When declaration statements go out of scope, they are destroyed by invoking the member function `drop`.
+
+### Call expressions
+ToDo
