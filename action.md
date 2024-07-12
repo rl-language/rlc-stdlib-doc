@@ -22,6 +22,7 @@
 ```
 * fun `load_action_vector_file<ActionType>(String file_name, Vector<ActionType> out)  -> Bool`
 * fun `enumerate(Bool b, Vector<Bool> output) `
+* fun `enumerate<T : Enum>(T b, Vector<T> output) `
 * fun `enumerate<T>(T obj)  -> Vector<T>`
 * fun `write_in_observation_tensor(Int value, Int min, Int max, Vector<Float> output, Int index) `
 * fun `write_in_observation_tensor(Int obj, Int observer_id, Vector<Float> output, Int index) `
@@ -72,4 +73,5 @@
 * fun `max(T obj)  -> Int`
 * fun `is_enum(T obj)  -> Bool`
 * fun `as_int(T obj)  -> Int`
+* fun `from_int(T obj, Int new_value) `
 
